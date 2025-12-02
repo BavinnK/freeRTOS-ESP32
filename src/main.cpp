@@ -1,7 +1,8 @@
 const int trigPin = 5, echopin = 18;
 volatile unsigned long start_time = 0;
-volatile unsigned long pulse_width = 0;
-portMUX_TYPE timerMux = portMUX_INITIALIZER_UNLOCKED;
+
+
+QueueHandle_t distanceQueue;
 
 void ultra_sonic_task(void *pvParameters) {
 
@@ -15,35 +16,48 @@ void ultra_sonic_task(void *pvParameters) {
 }
 void IRAM_ATTR echo_ISR() {
   bool echo_stat = digitalRead(echopin);
-  portENTER_CRITICAL_ISR(&timerMux);
+  
   if (echo_stat==HIGH) {
     start_time = micros();
   }
   else {
-   pulse_width = micros()-start_time;
+   unsigned long pulse_width = (micros()-start_time);
+   BaseType_t taskWoken=pdFALSE;
+
+   xQueueSendFromISR(distanceQueue, &pulse_width, &taskWoken);
+   if(taskWoken){
+    portYIELD_FROM_ISR();
+   }
   }
-  portEXIT_CRITICAL_ISR(&timerMux);
+  
+  
 }
 void setup() {
   pinMode(trigPin, OUTPUT);
   pinMode(echopin, INPUT);
   attachInterrupt(echopin, echo_ISR, CHANGE);
   Serial0.begin(115200);
+  distanceQueue=xQueueCreate(10, sizeof(unsigned long));
   xTaskCreatePinnedToCore(ultra_sonic_task, "ultraSonicTask", 4096, NULL, 2, NULL, 0);
 
 }
 
 void loop() {
   char buff [70];
-  portENTER_CRITICAL_ISR(&timerMux);
-  uint16_t distance_raw=pulse_width;
-  portEXIT_CRITICAL_ISR(&timerMux);
-  uint16_t distance_data=distance_raw/58;
+  
+  unsigned long rec_distance_raw;
+  
+  if(xQueueReceive(distanceQueue, &rec_distance_raw, 10)==pdTRUE){
+  unsigned long rec_distance_data=rec_distance_raw/58;
 
-  sprintf(buff, "Distance in cm: %d",distance_data);
+  sprintf(buff, "Distance in cm: %d",rec_distance_data);
   Serial0.println(buff);
   delay(100);
-
+  }
+  else{
+    Serial0.println("ERROR!!");
+    delay(100);
+  }
 
 
 }
